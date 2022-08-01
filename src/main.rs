@@ -5,9 +5,12 @@
 use defmt::unwrap;
 use defmt_rtt as _;
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
-use nrf_modem::{gnss::GnssConfig, ConnectionPreference, SystemMode};
-use panic_probe as _;
 use futures::StreamExt;
+use nrf_modem::{
+    gnss::{GnssConfig, NmeaMask},
+    ConnectionPreference, SystemMode,
+};
+use panic_probe as _;
 
 extern crate tinyrlibc;
 
@@ -60,11 +63,30 @@ async fn run() {
         .await
     );
 
+    // nrf_modem::at::send_at("AT+CEREG=?").await.unwrap();
+    nrf_modem::at::send_at("AT+CEREG=1").await.unwrap();
+    loop {
+        let notif = nrf_modem::at_notifications::wait_for_at_notification::<256>().await;
+        defmt::println!("{}", notif.as_str());
+    }
+
     unwrap!(nrf_modem::configure_gnss_on_pca10090ns().await);
     defmt::println!("Initializing gps");
-    let mut gnss = unwrap!(nrf_modem::gnss::Gnss::new().await);
+    let mut gnss = nrf_modem::gnss::Gnss::new().await.unwrap();
     defmt::println!("Starting single fix");
-    let mut iter = unwrap!(gnss.start_single_fix(GnssConfig { fix_retry: 300, ..Default::default() }));
+    let mut iter = gnss
+        .start_continuous_fix(GnssConfig {
+            fix_retry: 600,
+            nmea_mask: NmeaMask {
+                gga: false,
+                gll: false,
+                gsa: false,
+                gsv: false,
+                rmc: false,
+            },
+            ..Default::default()
+        })
+        .unwrap();
 
     while let Some(x) = iter.next().await {
         defmt::println!("{:?}", defmt::Debug2Format(&x));
