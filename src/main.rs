@@ -2,21 +2,20 @@
 #![no_std]
 #![feature(type_alias_impl_trait)]
 
+use core::str::FromStr;
 use defmt::unwrap;
 use defmt_rtt as _;
+use embassy::time::Duration;
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
-use nrf_modem::lte_link::LteLink;
-use nrf_modem::no_std_net::SocketAddr;
 use nrf_modem::{
-    ConnectionPreference, SystemMode,
+    lte_link::LteLink, no_std_net::SocketAddr, tcp_stream::TcpStream, ConnectionPreference,
+    SystemMode,
 };
 use panic_probe as _;
 
 extern crate tinyrlibc;
 
-defmt::timestamp!("{=u64:us}", {
-    embassy::time::Instant::now().as_micros()
-});
+defmt::timestamp!("{=u64:us}", { embassy::time::Instant::now().as_micros() });
 
 #[embassy::main]
 async fn main(_spawner: embassy::executor::Spawner, _p: embassy_nrf::Peripherals) {
@@ -89,20 +88,56 @@ async fn run() {
     // while let Some(x) = iter.next().await {
     //     defmt::println!("{:?}", defmt::Debug2Format(&x));
     // }
+    defmt::println!("Creating link");
 
     let link = LteLink::new().await.unwrap();
-    link.wait_for_link().await.unwrap();
+    embassy::time::with_timeout(Duration::from_millis(30000), link.wait_for_link())
+        .await
+        .unwrap()
+        .unwrap();
     let google_ip = nrf_modem::dns::get_host_by_name("google.com").unwrap();
     defmt::println!("Google ip: {:?}", defmt::Debug2Format(&google_ip));
-    let stream = nrf_modem::tcp_stream::TcpStream::connect(SocketAddr::from((google_ip, 80)))
+    let stream = embassy::time::with_timeout(
+        Duration::from_millis(2000),
+        TcpStream::connect(SocketAddr::from((google_ip, 80))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    stream
+        .write("GET / HTTP/1.0\nHost: google.com\r\n\r\n".as_bytes())
         .await
         .unwrap();
-
-    stream.send("GET / HTTP/1.0\nHost: google.com\r\n\r\n".as_bytes()).await.unwrap();
     let mut buffer = [0; 1024];
     let used = stream.receive(&mut buffer).await.unwrap();
 
     defmt::println!("Google page: {}", core::str::from_utf8(used).unwrap());
+
+    drop(stream);
+
+    let socket =
+        nrf_modem::udp_socket::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
+            .await
+            .unwrap();
+    // Do a DNS request
+    socket
+        .send_to(
+            &[
+                0xdb, 0x42, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x77,
+                0x77, 0x77, 0x0C, 0x6E, 0x6F, 0x72, 0x74, 0x68, 0x65, 0x61, 0x73, 0x74, 0x65, 0x72,
+                0x6E, 0x03, 0x65, 0x64, 0x75, 0x00, 0x00, 0x01, 0x00, 0x01,
+            ],
+            SocketAddr::from_str("8.8.8.8:53").unwrap(),
+        )
+        .await
+        .unwrap();
+    let (result, source) = socket.receive_from(&mut buffer).await.unwrap();
+
+    defmt::println!("Result: {:X}", result);
+    defmt::println!("Source: {}", defmt::Debug2Format(&source));
+
+    drop(socket);
 
     exit();
 }
