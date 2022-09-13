@@ -72,20 +72,20 @@ async fn run() {
     // let mut gnss = nrf_modem::gnss::Gnss::new().await.unwrap();
     // defmt::println!("Starting single fix");
     // let mut iter = gnss
-    //     .start_continuous_fix(GnssConfig {
+    //     .start_continuous_fix(nrf_modem::gnss::GnssConfig {
     //         fix_retry: 600,
-    //         nmea_mask: NmeaMask {
+    //         nmea_mask: nrf_modem::gnss::NmeaMask {
     //             gga: false,
     //             gll: false,
     //             gsa: false,
-    //             gsv: false,
+    //             gsv: true,
     //             rmc: false,
     //         },
     //         ..Default::default()
     //     })
     //     .unwrap();
 
-    // while let Some(x) = iter.next().await {
+    // while let Some(x) = futures::StreamExt::next(&mut iter).await {
     //     defmt::println!("{:?}", defmt::Debug2Format(&x));
     // }
     defmt::println!("Creating link");
