@@ -30,14 +30,6 @@ async fn main(_spawner: embassy::executor::Spawner, _p: embassy_nrf::Peripherals
     });
     egu1.enable();
 
-    let egu2 = embassy_nrf::interrupt::take!(EGU2);
-    egu2.set_priority(Priority::P4);
-    egu2.set_handler(|_| {
-        nrf_modem::trace_irq_handler();
-        cortex_m::asm::sev();
-    });
-    egu2.enable();
-
     let ipc = embassy_nrf::interrupt::take!(IPC);
     ipc.set_priority(Priority::P0);
     ipc.set_handler(|_| {
