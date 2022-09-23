@@ -760,7 +760,7 @@ dependencies = [
  "linked_list_allocator",
  "no-std-net",
  "nrf9160-pac",
- "nrfxlib-sys 2.0.2 (git+https://github.com/diondokter/nrfxlib-sys.git)",
+ "nrfxlib-sys",
  "num_enum",
 ]
 
@@ -788,7 +788,6 @@ dependencies = [
  "futures",
  "libm",
  "nrf-modem",
- "nrfxlib-sys 2.0.2",
  "panic-probe",
  "tinyrlibc",
 ]
@@ -796,15 +795,7 @@ dependencies = [
 [[package]]
 name = "nrfxlib-sys"
 version = "2.0.2"
-dependencies = [
- "bindgen",
- "regex",
-]
-
-[[package]]
-name = "nrfxlib-sys"
-version = "2.0.2"
-source = "git+https://github.com/diondokter/nrfxlib-sys.git#997b00c77ec049cb7a3dd998f0229f39eaf541b6"
+source = "git+https://github.com/diondokter/nrfxlib-sys.git?rev=c80b61a#c80b61ae8d3cf30b490a9182b61f1451a89fae2c"
 dependencies = [
  "bindgen",
  "regex",
