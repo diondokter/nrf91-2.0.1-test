@@ -106,8 +106,6 @@ async fn run() {
 
     defmt::println!("Google page: {}", core::str::from_utf8(used).unwrap());
 
-    drop(stream);
-
     let socket =
         nrf_modem::udp_socket::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
             .await
@@ -128,8 +126,6 @@ async fn run() {
 
     defmt::println!("Result: {:X}", result);
     defmt::println!("Source: {}", defmt::Debug2Format(&source));
-
-    drop(socket);
 
     exit();
 }
