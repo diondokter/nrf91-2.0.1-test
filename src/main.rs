@@ -87,7 +87,7 @@ async fn run() {
         .await
         .unwrap()
         .unwrap();
-    let google_ip = nrf_modem::dns::get_host_by_name("google.com").unwrap();
+    let google_ip = nrf_modem::dns::get_host_by_name("google.com").await.unwrap();
     defmt::println!("Google ip: {:?}", defmt::Debug2Format(&google_ip));
     let stream = embassy::time::with_timeout(
         Duration::from_millis(2000),
@@ -126,8 +126,6 @@ async fn run() {
 
     defmt::println!("Result: {:X}", result);
     defmt::println!("Source: {}", defmt::Debug2Format(&source));
-
-    exit();
 }
 
 // same panicking *behavior* as `panic-probe` but doesn't print a panic message
