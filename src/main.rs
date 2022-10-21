@@ -8,7 +8,7 @@ use defmt_rtt as _;
 use embassy::time::Duration;
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
 use nrf_modem::{
-    lte_link::LteLink, no_std_net::SocketAddr, tcp_stream::TcpStream, ConnectionPreference,
+    LteLink, no_std_net::SocketAddr, TcpStream, ConnectionPreference,
     SystemMode,
 };
 use panic_probe as _;
@@ -87,27 +87,27 @@ async fn run() {
         .await
         .unwrap()
         .unwrap();
-    let google_ip = nrf_modem::dns::get_host_by_name("google.com").await.unwrap();
+    let google_ip = nrf_modem::get_host_by_name("google.com").await.unwrap();
     defmt::println!("Google ip: {:?}", defmt::Debug2Format(&google_ip));
-    let stream = embassy::time::with_timeout(
+    let (read_stream, write_stream) = embassy::time::with_timeout(
         Duration::from_millis(2000),
         TcpStream::connect(SocketAddr::from((google_ip, 80))),
     )
     .await
     .unwrap()
-    .unwrap();
+    .unwrap().split_owned();
 
-    stream
+    write_stream
         .write("GET / HTTP/1.0\nHost: google.com\r\n\r\n".as_bytes())
         .await
         .unwrap();
     let mut buffer = [0; 1024];
-    let used = stream.receive(&mut buffer).await.unwrap();
+    let used = read_stream.receive(&mut buffer).await.unwrap();
 
     defmt::println!("Google page: {}", core::str::from_utf8(used).unwrap());
 
     let socket =
-        nrf_modem::udp_socket::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
+        nrf_modem::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
             .await
             .unwrap();
     // Do a DNS request
