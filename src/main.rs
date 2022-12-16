@@ -5,7 +5,7 @@
 use core::str::FromStr;
 use defmt::unwrap;
 use defmt_rtt as _;
-use embassy::time::Duration;
+use embassy_time::Duration;
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
 use nrf_modem::{
     LteLink, no_std_net::SocketAddr, TcpStream, ConnectionPreference,
@@ -15,10 +15,10 @@ use panic_probe as _;
 
 extern crate tinyrlibc;
 
-defmt::timestamp!("{=u64:us}", { embassy::time::Instant::now().as_micros() });
+defmt::timestamp!("{=u64:us}", { embassy_time::Instant::now().as_micros() });
 
-#[embassy::main]
-async fn main(_spawner: embassy::executor::Spawner, _p: embassy_nrf::Peripherals) {
+#[embassy_executor::main]
+async fn main(_spawner: embassy_executor::Spawner) {
     defmt::println!("Hello, world!");
 
     // Set up the interrupts for the modem
@@ -54,6 +54,7 @@ async fn run() {
             nbiot_support: false,
             gnss_support: true,
             preference: ConnectionPreference::Lte,
+            lte_psm_support: true,
         })
         .await
     );
@@ -83,26 +84,28 @@ async fn run() {
     defmt::println!("Creating link");
 
     let link = LteLink::new().await.unwrap();
-    embassy::time::with_timeout(Duration::from_millis(30000), link.wait_for_link())
+    embassy_time::with_timeout(Duration::from_millis(30000), link.wait_for_link())
         .await
         .unwrap()
         .unwrap();
+
     let google_ip = nrf_modem::get_host_by_name("google.com").await.unwrap();
     defmt::println!("Google ip: {:?}", defmt::Debug2Format(&google_ip));
-    let (read_stream, write_stream) = embassy::time::with_timeout(
+
+    let stream = embassy_time::with_timeout(
         Duration::from_millis(2000),
         TcpStream::connect(SocketAddr::from((google_ip, 80))),
     )
     .await
     .unwrap()
-    .unwrap().split_owned();
+    .unwrap();
 
-    write_stream
+    stream
         .write("GET / HTTP/1.0\nHost: google.com\r\n\r\n".as_bytes())
         .await
         .unwrap();
     let mut buffer = [0; 1024];
-    let used = read_stream.receive(&mut buffer).await.unwrap();
+    let used = stream.receive(&mut buffer).await.unwrap();
 
     defmt::println!("Google page: {}", core::str::from_utf8(used).unwrap());
 
