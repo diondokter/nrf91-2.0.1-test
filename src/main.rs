@@ -5,13 +5,9 @@
 use core::str::FromStr;
 use defmt::unwrap;
 use defmt_rtt as _;
+use embassy_nrf::interrupt::{Interrupt, InterruptExt, Priority};
 use embassy_time::Duration;
-use embassy_nrf::interrupt::{self, InterruptExt, Priority};
-use nrf_modem::{
-    LteLink, no_std_net::SocketAddr, TcpStream, ConnectionPreference,
-    SystemMode,
-};
-use panic_probe as _;
+use nrf_modem::{no_std_net::SocketAddr, ConnectionPreference, LteLink, SystemMode, TcpStream};
 
 extern crate tinyrlibc;
 
@@ -21,25 +17,28 @@ defmt::timestamp!("{=u64:us}", { embassy_time::Instant::now().as_micros() });
 async fn main(_spawner: embassy_executor::Spawner) {
     defmt::println!("Hello, world!");
 
+    use embassy_nrf::pac::interrupt;
+
     // Set up the interrupts for the modem
-    let egu1 = embassy_nrf::interrupt::take!(EGU1);
+    let egu1 = unsafe { embassy_nrf::interrupt::EGU1::steal() };
     egu1.set_priority(Priority::P4);
-    egu1.set_handler(|_| {
-        nrf_modem::application_irq_handler();
-        cortex_m::asm::sev();
-    });
     egu1.enable();
 
-    let ipc = embassy_nrf::interrupt::take!(IPC);
+    let ipc = unsafe { embassy_nrf::interrupt::IPC::steal() };
     ipc.set_priority(Priority::P0);
-    ipc.set_handler(|_| {
-        nrf_modem::ipc_irq_handler();
-        cortex_m::asm::sev();
-    });
     ipc.enable();
 
-    let regulators: embassy_nrf::pac::REGULATORS = unsafe { core::mem::transmute(()) };
-    regulators.dcdcen.modify(|_, w| w.dcdcen().enabled());
+    #[cortex_m_rt::interrupt]
+    fn EGU1() {
+        nrf_modem::application_irq_handler();
+        cortex_m::asm::sev();
+    }
+
+    #[cortex_m_rt::interrupt]
+    fn IPC() {
+        nrf_modem::ipc_irq_handler();
+        cortex_m::asm::sev();
+    }
 
     run().await;
 
@@ -109,10 +108,9 @@ async fn run() {
 
     defmt::println!("Google page: {}", core::str::from_utf8(used).unwrap());
 
-    let socket =
-        nrf_modem::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
-            .await
-            .unwrap();
+    let socket = nrf_modem::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
+        .await
+        .unwrap();
     // Do a DNS request
     socket
         .send_to(
@@ -131,11 +129,18 @@ async fn run() {
     defmt::println!("Source: {}", defmt::Debug2Format(&source));
 }
 
-// same panicking *behavior* as `panic-probe` but doesn't print a panic message
-// this prevents the panic message being printed *twice* when `defmt::panic` is invoked
-#[defmt::panic_handler]
-fn panic() -> ! {
-    cortex_m::asm::udf()
+/// Called when our code panics.
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    cortex_m::interrupt::disable();
+
+    defmt::println!("Panic: {}", defmt::Display2Format(info));
+
+    // Make this a hardfault. This has a lot of advantages:
+    // - No interrupt can interrupt a hardfault
+    // - Recursion cannot happen because the hardware prevents that
+    // - It is the natural endpoint for program failures on cortex-m
+    cortex_m::asm::udf();
 }
 
 /// Terminates the application and makes `probe-run` exit with exit-code = 0
