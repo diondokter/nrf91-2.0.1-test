@@ -1,6 +1,6 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
 # TODO(2) replace `$CHIP` with your chip's name (see `probe-run --list-chips` output)
-runner = "probe-run --chip nRF9160_xxAA"
+runner = "probe-rs run --chip nRF9160_xxAA"
 rustflags = [
   # "-C", "linker=flip-link",
   "-C", "link-arg=-Tlink.x",

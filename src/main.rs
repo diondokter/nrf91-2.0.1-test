@@ -3,14 +3,12 @@
 #![feature(type_alias_impl_trait)]
 
 use core::str::FromStr;
+use cortex_m_rt::ExceptionFrame;
 use defmt::unwrap;
 use defmt_rtt as _;
+use embassy_nrf::interrupt;
 use embassy_time::Duration;
-use embassy_nrf::interrupt::{self, InterruptExt, Priority};
-use nrf_modem::{
-    LteLink, no_std_net::SocketAddr, TcpStream, ConnectionPreference,
-    SystemMode,
-};
+use nrf_modem::{no_std_net::SocketAddr, ConnectionPreference, LteLink, SystemMode, TcpStream};
 use panic_probe as _;
 
 extern crate tinyrlibc;
@@ -21,25 +19,13 @@ defmt::timestamp!("{=u64:us}", { embassy_time::Instant::now().as_micros() });
 async fn main(_spawner: embassy_executor::Spawner) {
     defmt::println!("Hello, world!");
 
-    // Set up the interrupts for the modem
-    let egu1 = embassy_nrf::interrupt::take!(EGU1);
-    egu1.set_priority(Priority::P4);
-    egu1.set_handler(|_| {
-        nrf_modem::application_irq_handler();
-        cortex_m::asm::sev();
-    });
-    egu1.enable();
-
-    let ipc = embassy_nrf::interrupt::take!(IPC);
-    ipc.set_priority(Priority::P0);
-    ipc.set_handler(|_| {
+    // Interrupt Handler for LTE related hardware. Defer straight to the library.
+    #[cortex_m_rt::interrupt]
+    #[allow(non_snake_case)]
+    fn IPC() {
         nrf_modem::ipc_irq_handler();
         cortex_m::asm::sev();
-    });
-    ipc.enable();
-
-    let regulators: embassy_nrf::pac::REGULATORS = unsafe { core::mem::transmute(()) };
-    regulators.dcdcen.modify(|_, w| w.dcdcen().enabled());
+    }
 
     run().await;
 
@@ -59,15 +45,14 @@ async fn run() {
         .await
     );
 
-    // nrf_modem::configure_gnss_on_pca10090ns().await.unwrap();
+    nrf_modem::configure_gnss_on_pca10090ns().await.unwrap();
 
     // defmt::println!("Initializing gps");
-    // let mut gnss = nrf_modem::gnss::Gnss::new().await.unwrap();
+    // let gnss = nrf_modem::Gnss::new().await.unwrap();
     // defmt::println!("Starting single fix");
     // let mut iter = gnss
-    //     .start_continuous_fix(nrf_modem::gnss::GnssConfig {
-    //         fix_retry: 600,
-    //         nmea_mask: nrf_modem::gnss::NmeaMask {
+    //     .start_continuous_fix(nrf_modem::GnssConfig {
+    //         nmea_mask: nrf_modem::NmeaMask {
     //             gga: false,
     //             gll: false,
     //             gsa: false,
@@ -80,7 +65,11 @@ async fn run() {
 
     // while let Some(x) = futures::StreamExt::next(&mut iter).await {
     //     defmt::println!("{:?}", defmt::Debug2Format(&x));
+    //     break;
     // }
+
+    // iter.deactivate().await.unwrap();
+
     defmt::println!("Creating link");
 
     let link = LteLink::new().await.unwrap();
@@ -109,10 +98,11 @@ async fn run() {
 
     defmt::println!("Google page: {}", core::str::from_utf8(used).unwrap());
 
-    let socket =
-        nrf_modem::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
-            .await
-            .unwrap();
+    stream.deactivate().await.unwrap();
+
+    let socket = nrf_modem::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
+        .await
+        .unwrap();
     // Do a DNS request
     socket
         .send_to(
@@ -127,6 +117,9 @@ async fn run() {
         .unwrap();
     let (result, source) = socket.receive_from(&mut buffer).await.unwrap();
 
+    socket.deactivate().await.unwrap();
+    link.deactivate().await.unwrap();
+
     defmt::println!("Result: {:X}", result);
     defmt::println!("Source: {}", defmt::Debug2Format(&source));
 }
@@ -140,6 +133,15 @@ fn panic() -> ! {
 
 /// Terminates the application and makes `probe-run` exit with exit-code = 0
 pub fn exit() -> ! {
+    loop {
+        cortex_m::asm::bkpt();
+    }
+}
+
+#[cortex_m_rt::exception]
+unsafe fn HardFault(e: &ExceptionFrame) -> ! {
+    defmt::error!("HardFault: {}", defmt::Debug2Format(e));
+
     loop {
         cortex_m::asm::bkpt();
     }
