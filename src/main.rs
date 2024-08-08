@@ -1,6 +1,5 @@
 #![no_main]
 #![no_std]
-#![feature(type_alias_impl_trait)]
 
 use core::str::FromStr;
 use cortex_m_rt::ExceptionFrame;
@@ -34,6 +33,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
 async fn run() {
     defmt::println!("Initializing modem");
+
     unwrap!(
         nrf_modem::init(SystemMode {
             lte_support: true,
