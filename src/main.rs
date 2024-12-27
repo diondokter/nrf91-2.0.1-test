@@ -1,13 +1,15 @@
 #![no_main]
 #![no_std]
-#![feature(type_alias_impl_trait)]
 
-use core::str::FromStr;
+use core::{net::SocketAddr, str::FromStr};
+
+use cortex_m_rt::ExceptionFrame;
 use defmt::unwrap;
 use defmt_rtt as _;
-use embassy_nrf::interrupt::{Interrupt, InterruptExt, Priority};
+use embassy_nrf::interrupt;
 use embassy_time::Duration;
-use nrf_modem::{no_std_net::SocketAddr, ConnectionPreference, LteLink, SystemMode, TcpStream};
+use nrf_modem::{ConnectionPreference, LteLink, SystemMode, TcpStream};
+use panic_probe as _;
 
 extern crate tinyrlibc;
 
@@ -15,26 +17,11 @@ defmt::timestamp!("{=u64:us}", { embassy_time::Instant::now().as_micros() });
 
 #[embassy_executor::main]
 async fn main(_spawner: embassy_executor::Spawner) {
-    defmt::println!("Hello, world!");
+    defmt::info!("Hello, world!");
 
-    use embassy_nrf::pac::interrupt;
-
-    // Set up the interrupts for the modem
-    let egu1 = unsafe { embassy_nrf::interrupt::EGU1::steal() };
-    egu1.set_priority(Priority::P4);
-    egu1.enable();
-
-    let ipc = unsafe { embassy_nrf::interrupt::IPC::steal() };
-    ipc.set_priority(Priority::P0);
-    ipc.enable();
-
+    // Interrupt Handler for LTE related hardware. Defer straight to the library.
     #[cortex_m_rt::interrupt]
-    fn EGU1() {
-        nrf_modem::application_irq_handler();
-        cortex_m::asm::sev();
-    }
-
-    #[cortex_m_rt::interrupt]
+    #[allow(non_snake_case)]
     fn IPC() {
         nrf_modem::ipc_irq_handler();
         cortex_m::asm::sev();
@@ -46,7 +33,8 @@ async fn main(_spawner: embassy_executor::Spawner) {
 }
 
 async fn run() {
-    defmt::println!("Initializing modem");
+    defmt::info!("Initializing modem");
+
     unwrap!(
         nrf_modem::init(SystemMode {
             lte_support: true,
@@ -58,15 +46,14 @@ async fn run() {
         .await
     );
 
-    // nrf_modem::configure_gnss_on_pca10090ns().await.unwrap();
+    nrf_modem::configure_gnss_on_pca10090ns().await.unwrap();
 
-    // defmt::println!("Initializing gps");
-    // let mut gnss = nrf_modem::gnss::Gnss::new().await.unwrap();
-    // defmt::println!("Starting single fix");
+    // defmt::info!("Initializing gps");
+    // let gnss = nrf_modem::Gnss::new().await.unwrap();
+    // defmt::info!("Starting single fix");
     // let mut iter = gnss
-    //     .start_continuous_fix(nrf_modem::gnss::GnssConfig {
-    //         fix_retry: 600,
-    //         nmea_mask: nrf_modem::gnss::NmeaMask {
+    //     .start_continuous_fix(nrf_modem::GnssConfig {
+    //         nmea_mask: nrf_modem::NmeaMask {
     //             gga: false,
     //             gll: false,
     //             gsa: false,
@@ -78,18 +65,22 @@ async fn run() {
     //     .unwrap();
 
     // while let Some(x) = futures::StreamExt::next(&mut iter).await {
-    //     defmt::println!("{:?}", defmt::Debug2Format(&x));
+    //     defmt::info!("{:?}", defmt::Debug2Format(&x));
+    //     break;
     // }
-    defmt::println!("Creating link");
+
+    // iter.deactivate().await.unwrap();
+
+    defmt::info!("Creating link");
 
     let link = LteLink::new().await.unwrap();
-    embassy_time::with_timeout(Duration::from_millis(30000), link.wait_for_link())
+    embassy_time::with_timeout(Duration::from_millis(300000), link.wait_for_link())
         .await
         .unwrap()
         .unwrap();
 
     let google_ip = nrf_modem::get_host_by_name("google.com").await.unwrap();
-    defmt::println!("Google ip: {:?}", defmt::Debug2Format(&google_ip));
+    defmt::info!("Google ip: {:?}", defmt::Debug2Format(&google_ip));
 
     let stream = embassy_time::with_timeout(
         Duration::from_millis(2000),
@@ -106,7 +97,9 @@ async fn run() {
     let mut buffer = [0; 1024];
     let used = stream.receive(&mut buffer).await.unwrap();
 
-    defmt::println!("Google page: {}", core::str::from_utf8(used).unwrap());
+    defmt::info!("Google page: {}", core::str::from_utf8(used).unwrap());
+
+    stream.deactivate().await.unwrap();
 
     let socket = nrf_modem::UdpSocket::bind(SocketAddr::from_str("0.0.0.0:53").unwrap())
         .await
@@ -125,8 +118,11 @@ async fn run() {
         .unwrap();
     let (result, source) = socket.receive_from(&mut buffer).await.unwrap();
 
-    defmt::println!("Result: {:X}", result);
-    defmt::println!("Source: {}", defmt::Debug2Format(&source));
+    socket.deactivate().await.unwrap();
+    link.deactivate().await.unwrap();
+
+    defmt::info!("Result: {:X}", result);
+    defmt::info!("Source: {}", defmt::Debug2Format(&source));
 }
 
 /// Called when our code panics.
@@ -145,6 +141,15 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 /// Terminates the application and makes `probe-run` exit with exit-code = 0
 pub fn exit() -> ! {
+    loop {
+        cortex_m::asm::bkpt();
+    }
+}
+
+#[cortex_m_rt::exception]
+unsafe fn HardFault(e: &ExceptionFrame) -> ! {
+    defmt::error!("HardFault: {}", defmt::Debug2Format(e));
+
     loop {
         cortex_m::asm::bkpt();
     }
